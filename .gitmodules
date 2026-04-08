@@ -1,0 +1,3 @@
+[submodule "portfolio-proto"]
+	path = portfolio-proto
+	url = https://github.com/TaiseiHamaya/portfolio-proto
