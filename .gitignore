@@ -1,4 +1,6 @@
 Cargo.lock
 
-src/generated/*
-target/*
+/src/generated
+/target
+/logs
+/default.etcd
