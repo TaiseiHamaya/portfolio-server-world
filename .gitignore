@@ -1,6 +1,10 @@
 Cargo.lock
+/.cargo
+/target
+
+/.vs
+.env
 
 /src/generated
-/target
 /logs
 /default.etcd

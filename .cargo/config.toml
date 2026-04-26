@@ -1,6 +1,0 @@
-[build]
-target-dir = "../target/portfolio-server-gateway"
-
-[env]
-PROTOC = { value = "./portfolio-proto/protoc-32.1-win64/bin/protoc.exe", relative = true }
-PROTOC_INCLUDE = { value = "./portfolio-proto/protoc-32.1-win64/include/", relative = true }
