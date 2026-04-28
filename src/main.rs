@@ -30,25 +30,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log::info!(".env file loaded successfully.");
     }
 
+    // 他のサーバーからアクセス可能なIPアドレスとポートを取得
     let server_address = ec2_helper::get_local_ip().await;
-    let port = env::var("SERVER_PORT")
-        .unwrap_or_else(|_| "50051".into())
-        .parse()
-        .unwrap_or(50051);
-    let server_endpoint = SocketAddr::new(IpAddr::V4(server_address), port);
 
+    let world_server_port = env::var("SERVER_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50051);
+    let world_server_endpoint = SocketAddr::new(IpAddr::V4(server_address), world_server_port);
+
+    let lobby_server_port = env::var("LOBBY_SERVER_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50052);
+    let lobby_server_endpoint = SocketAddr::new(IpAddr::V4(server_address), lobby_server_port);
+
+    // etcdクライアントの作成
     let etcd_client = etcd_client_helper::create_etcd_client().await;
     // サービスエンドポイントをetcdに登録
     let _keep_alive_task = (
         etcd_client_helper::register_service_endpoint(
             etcd_client.clone(),
-            server_endpoint.to_string(),
+            world_server_endpoint,
             "world".to_string(),
         )
         .await,
         etcd_client_helper::register_service_endpoint(
             etcd_client.clone(),
-            server_endpoint.to_string(),
+            lobby_server_endpoint,
             "lobby".to_string(),
         )
         .await,
@@ -58,13 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_endpoint =
         etcd_client_helper::get_existing_service_endpoint(etcd_client.clone(), "db".to_string())
             .await
-            .map(|kv| {
-                kv.value()
-                    .to_vec()
-                    .into_iter()
-                    .map(|b| b as char)
-                    .collect::<String>()
-            })
+            .map(|kv| ["http://", &String::from_utf8_lossy(kv.value())].concat())
             .unwrap_or_else(|| format!("http://127.0.0.1:{}", 50050));
     log::info!("Record DB Server endpoint: {}", db_endpoint);
 
@@ -82,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             etcd_client::EventType::Put => {
                 log::info!("Zone updated: key={}, value={}", key, value);
                 // Channel作成
-                let channel = channel::Endpoint::from_shared(format!("http://{}", value))
+                let channel = channel::Endpoint::from_shared(["http://", &value].concat())
                     .unwrap()
                     .connect_lazy();
                 zones_watch.insert(key, channel);
@@ -102,11 +105,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         move |key, value| {
             let key = key
                 .strip_prefix("zones/")
-                .unwrap_or_default()
-                .parse::<u64>()
+                .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or_default();
             log::info!("Existing zone: key={}, value={}", key, value);
-            let channel = channel::Endpoint::from_shared(format!("http://{}", value))
+            let channel = channel::Endpoint::from_shared(["http://", &value].concat())
                 .unwrap()
                 .connect_lazy();
             zones_existing.insert(key, channel);
@@ -114,8 +116,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
 
-    let world_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 50051);
-    let lobby_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 50052);
+    let world_server_serve_addr =
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), world_server_port);
+    let lobby_server_serve_addr =
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), lobby_server_port);
 
     // DBサーバーに接続
     let record_player_db_client = RecordPlayerDbServiceClient::connect(db_endpoint)
@@ -130,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         match Server::builder()
             .add_service(WorldCommandServer::new(world_command_service))
-            .serve(world_addr)
+            .serve(world_server_serve_addr)
             .await
         {
             Ok(_) => log::info!("World server stopped."),
@@ -144,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Lobbyサーバーの初期化
     let world_command_client =
-        WorldCommandClient::connect(format!("http://localhost:{}", world_addr.port()))
+        WorldCommandClient::connect(format!("http://{}", world_server_endpoint))
             .await
             .expect("Failed to connect to World server");
     log::info!("Connected to World Server.");
@@ -155,7 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 起動
         match Server::builder()
             .add_service(LobbyServiceServer::new(lobby_service))
-            .serve(lobby_addr)
+            .serve(lobby_server_serve_addr)
             .await
         {
             Ok(_) => log::info!("Lobby server stopped."),

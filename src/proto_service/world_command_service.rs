@@ -48,6 +48,7 @@ impl WorldCommand for WorldCommandServiceImpl {
         let source_zone_id = inner.source_zone_id;
         let target_zone_id = inner.target_zone_id;
         let user_id = inner.user_id;
+        let gateway_id = 0; // TODO: ゲートウェイIDをどこかから取得する必要がある
         log::info!(
             "Received begin zone route command for user_id {}. source_zone_id: {:?}, target_zone_id: {:?}",
             user_id,
@@ -197,7 +198,10 @@ impl WorldCommand for WorldCommandServiceImpl {
 
             // 新しいゾーンにプレイヤーの追加を依頼
             let _ = match zone_client
-                .begin_player_zone_enter(PayloadPlayerZoneEnterBegin { user_id })
+                .begin_player_zone_enter(PayloadPlayerZoneEnterBegin {
+                    user_id,
+                    gateway_id,
+                })
                 .await
             {
                 Ok(_) => {

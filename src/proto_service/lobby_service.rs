@@ -120,6 +120,7 @@ impl LobbyService for LobbyServiceImpl {
 
         self.user_accounts.remove(&user_id);
         return Ok(tonic::Response::new(PayloadLobbyStartGameResponse {
+            zone_id: record.zone_id,
             player_entity_id,
         }));
     }

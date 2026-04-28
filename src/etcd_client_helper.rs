@@ -1,4 +1,9 @@
-use std::{env, net::Ipv4Addr};
+#![allow(dead_code)]
+
+use std::{
+    env,
+    net::{Ipv4Addr, SocketAddr},
+};
 
 use etcd_client::{KeyValue, PutOptions};
 
@@ -24,10 +29,14 @@ pub async fn create_etcd_client() -> etcd_client::Client {
 
 pub async fn register_service_endpoint(
     mut etcd_client: etcd_client::Client,
-    endpoint: String,
+    endpoint: SocketAddr,
     key: String,
 ) -> tokio::task::JoinHandle<()> {
-    log::info!("Registering service endpoint in etcd with key: {}", key);
+    log::info!(
+        "Registering service endpoint in etcd with key: {}, endpoint: {}",
+        key,
+        endpoint
+    );
 
     let lease = etcd_client
         .lease_grant(5, None)
@@ -35,7 +44,7 @@ pub async fn register_service_endpoint(
         .expect("Failed to create etcd lease");
     let option = PutOptions::new().with_lease(lease.id());
     etcd_client
-        .put(key, endpoint, Some(option))
+        .put(key, endpoint.to_string(), Some(option))
         .await
         .expect("Failed to register service endpoint in etcd");
 
@@ -125,8 +134,12 @@ pub async fn watch_changes(
             .expect("Failed to receive watch message")
         {
             for event in response.events() {
-                let value_str = String::from_utf8_lossy(event.kv().unwrap().value());
-                log::info!("Received etcd watch event: {:?}", value_str);
+                log::info!(
+                    "Received etcd event: type={:?}, key={:?}, value={:?}",
+                    event.event_type(),
+                    event.kv().map(|kv| String::from_utf8_lossy(kv.key())),
+                    event.kv().map(|kv| String::from_utf8_lossy(kv.value()))
+                );
                 handler(&event);
             }
         }
