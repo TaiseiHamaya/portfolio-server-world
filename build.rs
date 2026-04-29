@@ -3,14 +3,6 @@ use std::fs;
 use tonic_prost_build;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let protoc_ver = "32.1";
-    unsafe {
-        std::env::set_var(
-            "PROTOC",
-            format!("./portfolio-proto/protoc-{}-win64/bin/protoc", protoc_ver),
-        );
-    }
-
     // 出力ファイル・ディレクトリの作成
     fs::create_dir_all("src/generated/")?;
     let server_out_dir = "src/generated/server/";
