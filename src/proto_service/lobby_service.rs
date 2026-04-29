@@ -6,12 +6,11 @@ use crate::generated::{
     proto_client::{
         PayloadPlayerLoadRequest, record_player_db_service_client::RecordPlayerDbServiceClient,
     },
-    proto_inner::PayloadBeginRouteCommand,
     proto_inner::{
-        PayloadLobbyEndGameRequest, PayloadLobbyEndGameResponse, PayloadLobbyEnterRequest,
-        PayloadLobbyEnterResponse, PayloadLobbyExitRequest, PayloadLobbyExitResponse,
-        PayloadLobbyStartGameRequest, PayloadLobbyStartGameResponse,
-        lobby_service_server::LobbyService, world_command_client::WorldCommandClient,
+        PayloadBeginRouteCommand, PayloadLobbyEndGameRequest, PayloadLobbyEndGameResponse,
+        PayloadLobbyEnterRequest, PayloadLobbyEnterResponse, PayloadLobbyExitRequest,
+        PayloadLobbyExitResponse, PayloadLobbyStartGameRequest, PayloadLobbyStartGameResponse,
+        Vector3, lobby_service_server::LobbyService, world_command_client::WorldCommandClient,
     },
 };
 
@@ -112,16 +111,23 @@ impl LobbyService for LobbyServiceImpl {
             ));
         };
 
-        let Some(player_entity_id) = result.into_inner().player_entity_id else {
+        let Some(route_player_data) = result.into_inner().player_data else {
             return Err(tonic::Status::internal(
                 "Failed to begin zone route for player.",
             ));
         };
 
+        let position = route_player_data.position.unwrap_or_default();
+
         self.user_accounts.remove(&user_id);
         return Ok(tonic::Response::new(PayloadLobbyStartGameResponse {
             zone_id: record.zone_id,
-            player_entity_id,
+            player_entity_id: route_player_data.player_entity_id,
+            position: Some(Vector3 {
+                x: position.x,
+                y: position.y,
+                z: position.z,
+            }),
         }));
     }
 

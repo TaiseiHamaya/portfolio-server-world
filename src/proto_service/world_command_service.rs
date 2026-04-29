@@ -8,7 +8,7 @@ use crate::generated::{
         PlayerRouteResult, world_route_service_client::WorldRouteServiceClient,
     },
     proto_inner::{
-        PayloadBeginRouteCommand, PayloadPlayerRouteCommandResponse,
+        self, PayloadBeginRouteCommand, PayloadPlayerRouteCommandResponse,
         world_command_server::WorldCommand,
     },
 };
@@ -293,19 +293,27 @@ impl WorldCommand for WorldCommandServiceImpl {
                 )));
             };
 
-            let player_entity_id = result.into_inner().player_entity_id;
             log::info!(
                 "Player {} has successfully entered the new zone with player_entity_id {:?}.",
                 user_id,
-                player_entity_id
+                result.get_ref().player_data
             );
             return Ok(tonic::Response::new(PayloadPlayerRouteCommandResponse {
-                player_entity_id,
+                player_data: result.into_inner().player_data.map(|data| {
+                    proto_inner::RoutePlayerData {
+                        player_entity_id: data.player_entity_id,
+                        position: data.position.map(|pos| proto_inner::Vector3 {
+                            x: pos.x,
+                            y: pos.y,
+                            z: pos.z,
+                        }),
+                    }
+                }),
             }));
         }
 
         return Ok(tonic::Response::new(PayloadPlayerRouteCommandResponse {
-            player_entity_id: None,
+            player_data: None,
         }));
     }
 }
