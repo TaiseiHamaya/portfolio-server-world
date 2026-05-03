@@ -8,7 +8,7 @@ use crate::generated::{
         PlayerRouteResult, world_route_service_client::WorldRouteServiceClient,
     },
     proto_inner::{
-        self, PayloadBeginRouteCommand, PayloadPlayerRouteCommandResponse,
+        self, PayloadBeginRouteCommand, PayloadExecuteRoute, PayloadPlayerRouteCommandResponse,
         world_command_server::WorldCommand,
     },
 };
@@ -16,11 +16,16 @@ use crate::generated::{
 #[derive(Debug, Clone)]
 pub struct WorldCommandServiceImpl {
     pub zone_clients: Arc<DashMap<u64, tonic::transport::Channel>>,
+
+    routeing_users: DashMap<u64, WorldRouteServiceClient<tonic::transport::Channel>>,
 }
 
 impl WorldCommandServiceImpl {
     pub fn new(zone_clients: Arc<DashMap<u64, tonic::transport::Channel>>) -> Self {
-        Self { zone_clients }
+        Self {
+            zone_clients,
+            routeing_users: DashMap::new(),
+        }
     }
 
     pub fn get_zone_client(
@@ -184,7 +189,7 @@ impl WorldCommand for WorldCommandServiceImpl {
         }
 
         if let Some(target_zone_id) = target_zone_id {
-            let Some(mut zone_client) = self.get_zone_client(target_zone_id) else {
+            let Some(mut zone_route_client) = self.get_zone_client(target_zone_id) else {
                 // zoneが存在しない
                 log::error!(
                     "Error occurred while getting zone_client for target_zone_id {}.",
@@ -197,20 +202,20 @@ impl WorldCommand for WorldCommandServiceImpl {
             };
 
             // 新しいゾーンにプレイヤーの追加を依頼
-            let _ = match zone_client
+            let player_data = match zone_route_client
                 .begin_player_zone_enter(PayloadPlayerZoneEnterBegin {
                     user_id,
                     gateway_id,
                 })
                 .await
             {
-                Ok(_) => {
+                Ok(response) => {
                     log::info!(
                         "Successfully sent begin player zone enter for user_id {} in target_zone_id {}.",
                         user_id,
                         target_zone_id
                     );
-                    ()
+                    response.into_inner().player_data
                 }
                 Err(e) => {
                     log::error!(
@@ -227,7 +232,7 @@ impl WorldCommand for WorldCommandServiceImpl {
             };
 
             'check_enter_ready: loop {
-                let result = zone_client
+                let result = zone_route_client
                     .check_for_ready_enter_player(PayloadPlayerZoneEnterReady { user_id })
                     .await;
                 match result {
@@ -277,37 +282,22 @@ impl WorldCommand for WorldCommandServiceImpl {
                 }
             }
 
-            // execute enter
-            let Ok(result) = zone_client
-                .execute_enter_zone_player(PayloadPlayerZoneEnterComplete { user_id })
-                .await
-            else {
-                log::error!(
-                    "Failed to execute enter zone player for user_id {} in target_zone_id {}.",
-                    user_id,
-                    target_zone_id
-                );
-                return Err(tonic::Status::internal(format!(
-                    "Failed to execute enter zone player for user_id {} in target_zone_id {}.",
-                    user_id, target_zone_id
-                )));
-            };
+            self.routeing_users
+                .insert(user_id, zone_route_client.clone());
 
             log::info!(
-                "Player {} has successfully entered the new zone with player_entity_id {:?}.",
+                "Player {} has successfully begun routing to the new zone {}.",
                 user_id,
-                result.get_ref().player_data
+                target_zone_id
             );
             return Ok(tonic::Response::new(PayloadPlayerRouteCommandResponse {
-                player_data: result.into_inner().player_data.map(|data| {
-                    proto_inner::RoutePlayerData {
-                        player_entity_id: data.player_entity_id,
-                        position: data.position.map(|pos| proto_inner::Vector3 {
-                            x: pos.x,
-                            y: pos.y,
-                            z: pos.z,
-                        }),
-                    }
+                player_data: player_data.map(|data| proto_inner::RoutePlayerData {
+                    player_entity_id: data.player_entity_id,
+                    position: data.position.map(|pos| proto_inner::Vector3 {
+                        x: pos.x,
+                        y: pos.y,
+                        z: pos.z,
+                    }),
                 }),
             }));
         }
@@ -315,5 +305,68 @@ impl WorldCommand for WorldCommandServiceImpl {
         return Ok(tonic::Response::new(PayloadPlayerRouteCommandResponse {
             player_data: None,
         }));
+    }
+
+    /// Zone -> World: execute player route.
+    async fn execute_zone_route(
+        &self,
+        request: tonic::Request<PayloadExecuteRoute>,
+    ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
+        let user_id = request.into_inner().user_id;
+        log::info!(
+            "Received execute zone route command for user_id {}.",
+            user_id
+        );
+
+        let Some((_, mut zone_client)) = self.routeing_users.remove(&user_id) else {
+            log::error!(
+                "No zone client found for user_id {} when executing zone route.",
+                user_id
+            );
+            return Err(tonic::Status::internal(format!(
+                "No zone client found for user_id {} when executing zone route.",
+                user_id
+            )));
+        };
+
+        // execute enter
+        let Ok(result) = zone_client
+            .execute_enter_zone_player(PayloadPlayerZoneEnterComplete { user_id })
+            .await
+        else {
+            log::error!(
+                "Failed to execute enter zone player for user_id {}.",
+                user_id
+            );
+            return Err(tonic::Status::internal(format!(
+                "Failed to execute enter zone player for user_id {}.",
+                user_id
+            )));
+        };
+
+        let result = result.into_inner().result;
+        let _ = match PlayerRouteResult::try_from(result) {
+            Ok(PlayerRouteResult::Success) => {
+                log::info!("Player {} has successfully entered the zone.", user_id);
+                return Ok(tonic::Response::new(()));
+            }
+            Ok(_) => {
+                log::error!(
+                    "Failed to execute enter zone player for user_id {}.",
+                    user_id
+                );
+                return Err(tonic::Status::internal(format!(
+                    "Failed to execute enter zone player for user_id {}.",
+                    user_id
+                )));
+            }
+            Err(_) => {
+                log::error!("Invalid player route result: {}", result);
+                return Err(tonic::Status::internal(format!(
+                    "Invalid player route result: {}",
+                    result
+                )));
+            }
+        };
     }
 }
