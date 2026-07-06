@@ -60,7 +60,7 @@ impl LobbyService for LobbyServiceImpl {
         self.user_accounts.insert(user_id);
         return Ok(tonic::Response::new(PayloadLobbyEnterResponse {
             is_succeeded: true,
-            character_name: record.username.clone(),
+            character_name: record.username,
         }));
     }
 
